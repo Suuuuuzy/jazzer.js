@@ -1,0 +1,1 @@
+node packages/core/dist/cli.js examples/eidos/main.js --sync --timeout 500000 --disable_bug_detectors='.*'
