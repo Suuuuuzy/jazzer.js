@@ -201,15 +201,54 @@ export class Instrumentor {
 
 export function registerInstrumentor(instrumentor: Instrumentor) {
 	instrumentor.init();
-
-	hookRequire(
-		() => true,
-		(code: string, opts: TransformerOptions): string => {
-			return instrumentor.instrument(code, opts.filename)?.code || code;
+	// ===== [Runaway] Starts =====
+	const { registerHooks } = require("module");
+	const fs = require("fs");
+	const { fileURLToPath } = require("url");
+	const cache = new Map();
+	console.log("[ENGINE] register loader with instrumentor");
+	registerHooks({
+		load(url: string, ctx: any, next: (arg0: any, arg1: any) => any) {
+			const res = next(url, ctx);
+			if (!url.startsWith("file:") || res.format !== "module") return res;
+			const filename = fileURLToPath(url);
+			try {
+				const stat = fs.statSync(filename);
+				const cached = cache.get(filename);
+				if (cached && cached.mtimeMs === stat.mtimeMs) {
+					return { format: "module", source: cached.codeWithMap };
+				}
+				const src = fs.readFileSync(filename, "utf8");
+				// console.log('[Before INSTRUMENT]', src);
+				const instrumentResult = instrumentor.instrument(src, filename);
+				const code = instrumentResult?.code || src;
+				// console.log('[After INSTRUMENT]', code);
+				const codeWithMap = code;
+				// console.log('[INSTRUMENT]', filename);
+				cache.set(filename, { mtimeMs: stat.mtimeMs, codeWithMap });
+				return { format: "module", source: codeWithMap };
+			} catch (e) {
+				console.warn(
+					"[INSTRUMENT:SKIP]",
+					filename,
+					e instanceof Error ? e.message : String(e),
+				);
+				return res;
+			}
 		},
-		// required to allow jest to run typescript files
-		// jest's typescript integration will transform the typescript into javascript before giving it to the
-		// instrumentor but the filename will still have a .ts extension
-		{ extensions: [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"] },
-	);
+	});
+	// ===== [Runaway] Ends =====
+
+	// ===== [Runaway] Starts =====
+	// hookRequire(
+	// 	() => true,
+	// 	(code: string, opts: TransformerOptions): string => {
+	// 		return instrumentor.instrument(code, opts.filename)?.code || code;
+	// 	},
+	// 	// required to allow jest to run typescript files
+	// 	// jest's typescript integration will transform the typescript into javascript before giving it to the
+	// 	// instrumentor but the filename will still have a .ts extension
+	// 	{ extensions: [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"] },
+	// );
+	// ===== [Runaway] Ends =====
 }
