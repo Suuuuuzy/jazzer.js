@@ -2,6 +2,7 @@
 **/crash-*
 **/oom-*
 **/timeout-*
+**/corpus/
 
 # Editors
 .idea
