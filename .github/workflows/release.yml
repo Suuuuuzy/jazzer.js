@@ -1,0 +1,41 @@
+name: Build & Release Tarballs
+on:
+  push:
+    tags:
+      - 'v*'
+jobs:
+  build-pack:
+    runs-on: mac
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - run: pnpm -w install --frozen-lockfile
+      - run: pnpm -w build
+
+      # Pack the packages you want to ship
+      - run: |
+          cd packages/core && npm pack && cd -
+          cd packages/fuzzer && npm pack && cd -
+          # add more packs as needed
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            packages/core/*.tgz
+            packages/fuzzer/*.tgz
+            packages/bug-detectors/*.tgz
+            packages/hooking/*.tgz
+            packages/instrumentor/*.tgz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
