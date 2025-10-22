@@ -93,24 +93,72 @@ export async function initFuzzing(options: Options): Promise<Instrumentor> {
 
 	// Dynamic import works only with javascript files, so we have to manually specify the directory with the
 	// transpiled bug detector files.
-	const possibleBugDetectorFiles = getFilteredBugDetectorPaths(
-		path.join(__dirname, "../../bug-detectors/dist/internal"),
-		options.disableBugDetectors,
+	// const possibleBugDetectorFiles = getFilteredBugDetectorPaths(
+	// 	path.join(__dirname, "../../bug-detectors/dist/internal"),
+	// 	options.disableBugDetectors,
+	// );
+
+	// if (process.env.JAZZER_DEBUG) {
+	// 	console.error(
+	// 		"INFO: [BugDetector] Loading bug detectors: \n   " +
+	// 			possibleBugDetectorFiles.join("\n   "),
+	// 	);
+	// }
+
+	// Load bug detectors before loading custom hooks because some bug detectors can be configured in the
+	// custom hooks file.
+	// await Promise.all(
+	// 	possibleBugDetectorFiles.map(ensureFilepath).map(importModule),
+	// );
+
+	// Load bug detectors, respecting disable patterns
+	const bugDetectorModules = [
+		{
+			name: "command-injection",
+			path: "@jazzer.js/bug-detectors/dist/internal/command-injection",
+		},
+		{
+			name: "path-traversal",
+			path: "@jazzer.js/bug-detectors/dist/internal/path-traversal",
+		},
+		{
+			name: "prototype-pollution",
+			path: "@jazzer.js/bug-detectors/dist/internal/prototype-pollution",
+		},
+	];
+
+	const disablePatterns = options.disableBugDetectors.map(
+		(pattern: string) => new RegExp(pattern),
 	);
+
+	const enabledDetectors = bugDetectorModules.filter((detector) => {
+		const shouldDisable = disablePatterns.some((pattern) =>
+			pattern.test(detector.name),
+		);
+
+		if (shouldDisable) {
+			console.error(
+				`Skip loading bug detector "${detector.name}" because of user-provided pattern.`,
+			);
+		}
+		return !shouldDisable;
+	});
 
 	if (process.env.JAZZER_DEBUG) {
 		console.error(
 			"INFO: [BugDetector] Loading bug detectors: \n   " +
-				possibleBugDetectorFiles.join("\n   "),
+				enabledDetectors.map((d) => d.path).join("\n   "),
 		);
 	}
 
-	// Load bug detectors before loading custom hooks because some bug detectors can be configured in the
-	// custom hooks file.
-	await Promise.all(
-		possibleBugDetectorFiles.map(ensureFilepath).map(importModule),
-	);
-
+	// Load enabled bug detectors
+	enabledDetectors.forEach((detector) => {
+		try {
+			require(detector.path);
+		} catch (error) {
+			console.error(`Failed to load bug detector ${detector.name}:`, error);
+		}
+	});
 	await Promise.all(options.customHooks.map(ensureFilepath).map(importModule));
 
 	await hooking.hookManager.finalizeHooks();
