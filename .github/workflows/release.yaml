@@ -1,40 +1,36 @@
-name: Build & Release Tarballs
+name: "🚀 Release"
+
 on:
   push:
     tags:
       - "v*"
-    branches:
-      - feat/electron-hooks # only trigger when tag is on this branch
 
 jobs:
-  build-pack:
-    runs-on: macos-latest # build on macOS instead of Ubuntu
+  release:
+    name: build and release tarballs
+    runs-on: macos-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: checkout
+        uses: actions/checkout@v3
+      - name: node
+        uses: actions/setup-node@v3
         with:
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "pnpm"
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - run: pnpm -w install --frozen-lockfile
-      - run: pnpm -w build
-
-      - run: |
+          node-version: 20
+          cache: "npm"
+      - name: install & build
+        run: npm ci && npm run build
+      - name: pack all packages
+        run: |
           cd packages/core && npm pack && cd -
           cd packages/fuzzer && npm pack && cd -
-
-      - name: Upload release assets
+          cd packages/bug-detectors && npm pack && cd -
+          cd packages/hooking && npm pack && cd -
+          cd packages/instrumentor && npm pack && cd -
+          cd packages/jest-runner && npm pack && cd -
+      - name: create release with tarballs
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            packages/core/*.tgz
-            packages/fuzzer/*.tgz
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: packages/**/*.tgz
+          generate_release_notes: true
