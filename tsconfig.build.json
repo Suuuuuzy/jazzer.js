@@ -1,11 +1,11 @@
 {
 	"files": [],
 	"references": [
-		{ "path": "packages/bug-detectors" },
 		{ "path": "packages/core" },
 		{ "path": "packages/fuzzer" },
 		{ "path": "packages/hooking" },
 		{ "path": "packages/instrumentor" },
+		{ "path": "packages/bug-detectors" },
 		{ "path": "packages/jest-runner" }
 	]
 }
