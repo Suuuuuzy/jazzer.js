@@ -8,7 +8,7 @@ on:
 jobs:
   release:
     name: build and release tarballs
-    runs-on: macos-latest
+    runs-on: ubuntu-20.04
     permissions:
       contents: write
     steps:
@@ -34,3 +34,5 @@ jobs:
         with:
           files: packages/**/*.tgz
           generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
