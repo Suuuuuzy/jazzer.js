@@ -14,18 +14,6 @@
  * limitations under the License.
  */
 
-// Type declarations for Node.js globals with Electron extensions
-declare const require: any;
-declare const __dirname: string;
-declare type Buffer = any;
-
-interface ElectronProcess {
-	resourcesPath: string;
-	dlopen(module: { exports: any }, filename: string): void;
-}
-
-declare const process: ElectronProcess;
-
 export type FuzzTargetAsyncOrValue = (
 	data: Buffer,
 ) => unknown | Promise<unknown>;
@@ -77,16 +65,31 @@ type NativeAddon = {
 	startFuzzingAsync: StartFuzzingAsyncFn;
 };
 
-// Use dlopen to load the native addon with Electron-compatible path resolution
+// Load the native addon based on the runtime environment
 let addon: NativeAddon;
-try {
-	const path = require("path");
-	const addonPath = path.join(process.resourcesPath, "jazzerjs.node");
-	const module = { exports: {} as any };
-	process.dlopen(module, addonPath);
-	addon = module.exports as NativeAddon;
-} catch (error) {
-	console.warn("[jazzer.js] Failed to load jazzerjs.node");
+
+if (process.versions.electron !== undefined) {
+	// case 1: electron
+	// Use dlopen to load the native addon with Electron-compatible path resolution
+	try {
+		const path = require("path");
+		const addonPath = path.join(
+			(process as any).resourcesPath,
+			"jazzerjs.node",
+		);
+		const module = { exports: {} as any };
+		(process as any).dlopen(module, addonPath);
+		addon = module.exports as NativeAddon;
+	} catch (error) {
+		console.warn(
+			"[jazzer.js] Failed to load jazzerjs.node from Electron resources",
+		);
+		throw error;
+	}
+} else {
+	// case 0: node
+	const bind = require("bindings");
+	addon = bind("jazzerjs");
 }
 
 export { addon };
