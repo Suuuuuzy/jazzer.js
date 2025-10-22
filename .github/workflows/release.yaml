@@ -1,25 +1,40 @@
-name: "🚀 Release"
-
+name: Build & Release Tarballs
 on:
-  release:
-    types: [released]
+  push:
+    tags:
+      - "v*"
+    branches:
+      - feat/electron-hooks # only trigger when tag is on this branch
 
 jobs:
-  release:
-    name: release
-    runs-on: macos-latest
+  build-pack:
+    runs-on: macos-latest # build on macOS instead of Ubuntu
     steps:
-      - name: checkout
-        uses: actions/checkout@v3
-      - name: node
-        uses: actions/setup-node@v3
+      - uses: actions/checkout@v4
         with:
-          node-version: 16
-          cache: "npm"
-          registry-url: https://registry.npmjs.org
-      - name: install & build
-        run: npm ci && npm run build
-      - name: publish to npm
-        run: npm publish --workspaces --access public
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - run: pnpm -w install --frozen-lockfile
+      - run: pnpm -w build
+
+      - run: |
+          cd packages/core && npm pack && cd -
+          cd packages/fuzzer && npm pack && cd -
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            packages/core/*.tgz
+            packages/fuzzer/*.tgz
         env:
-          NODE_AUTH_TOKEN: ${{secrets.NPM_ACCESS_TOKEN}}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
