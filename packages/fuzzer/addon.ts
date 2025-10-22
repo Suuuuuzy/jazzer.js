@@ -14,7 +14,17 @@
  * limitations under the License.
  */
 
-import { default as bind } from "bindings";
+// Type declarations for Node.js globals with Electron extensions
+declare const require: any;
+declare const __dirname: string;
+declare type Buffer = any;
+
+interface ElectronProcess {
+	resourcesPath: string;
+	dlopen(module: { exports: any }, filename: string): void;
+}
+
+declare const process: ElectronProcess;
 
 export type FuzzTargetAsyncOrValue = (
 	data: Buffer,
@@ -67,4 +77,16 @@ type NativeAddon = {
 	startFuzzingAsync: StartFuzzingAsyncFn;
 };
 
-export const addon: NativeAddon = bind("jazzerjs");
+// Use dlopen to load the native addon with Electron-compatible path resolution
+let addon: NativeAddon;
+try {
+	const path = require("path");
+	const addonPath = path.join(process.resourcesPath, "jazzerjs.node");
+	const module = { exports: {} as any };
+	process.dlopen(module, addonPath);
+	addon = module.exports as NativeAddon;
+} catch (error) {
+	console.warn("[jazzer.js] Failed to load jazzerjs.node");
+}
+
+export { addon };
