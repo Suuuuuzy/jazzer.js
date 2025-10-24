@@ -201,12 +201,20 @@ export class Instrumentor {
 
 export function registerInstrumentor(instrumentor: Instrumentor) {
 	instrumentor.init();
+
+	// Check if running in Electron environment
+	const isElectron =
+		typeof process !== "undefined" &&
+		process.versions &&
+		"electron" in process.versions;
+
 	// ===== [Runaway] Starts =====
 	const { registerHooks } = require("module");
 	const fs = require("fs");
 	const { fileURLToPath } = require("url");
+	const Module = require("module");
 	const cache = new Map();
-	console.log("[ENGINE] register loader with instrumentor");
+	// Hook ESM loader
 	registerHooks({
 		load(url: string, ctx: any, next: (arg0: any, arg1: any) => any) {
 			const res = next(url, ctx);
@@ -237,9 +245,25 @@ export function registerInstrumentor(instrumentor: Instrumentor) {
 			}
 		},
 	});
-	// ===== [Runaway] Ends =====
 
-	// ===== [Runaway] Starts =====
+	// Hook CommonJS loader
+	const originalCompile = Module.prototype._compile;
+	Module.prototype._compile = function (content: string, filename: string) {
+		try {
+			const instrumentResult = instrumentor.instrument(content, filename);
+			const code = instrumentResult?.code || content;
+			return originalCompile.call(this, code, filename);
+		} catch (e) {
+			console.warn(
+				"[INSTRUMENT:SKIP]",
+				filename,
+				e instanceof Error ? e.message : String(e),
+			);
+			return originalCompile.call(this, content, filename);
+		}
+	};
+	// ===== [Runaway] Ends =====
+	// ===== [Node.js] Starts =====
 	// hookRequire(
 	// 	() => true,
 	// 	(code: string, opts: TransformerOptions): string => {
@@ -250,5 +274,5 @@ export function registerInstrumentor(instrumentor: Instrumentor) {
 	// 	// instrumentor but the filename will still have a .ts extension
 	// 	{ extensions: [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"] },
 	// );
-	// ===== [Runaway] Ends =====
+	// ===== [Node.js] Ends =====
 }
