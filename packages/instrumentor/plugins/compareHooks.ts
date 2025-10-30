@@ -54,16 +54,16 @@ export function compareHooks(): PluginTarget {
 				);
 			},
 			SwitchStatement(path: NodePath<SwitchStatement>) {
-				if (!isIdentifier(path.node.discriminant)) {
-					return;
-				}
-				const id = path.node.discriminant;
+				// Support any expression as discriminant, not just identifiers
+				// This handles cases like: switch(obj.prop.toLowerCase()) { ... }
+				const discriminant = path.node.discriminant;
+
 				for (const i in path.node.cases) {
 					const test = path.node.cases[i].test;
 					if (test) {
 						path.node.cases[i].test = types.callExpression(
 							types.identifier("Fuzzer.tracer.traceAndReturn"),
-							[id, test, fakePC()],
+							[discriminant, test, fakePC()],
 						);
 					}
 				}
