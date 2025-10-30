@@ -17,7 +17,9 @@
 import { NodePath, PluginTarget, types } from "@babel/core";
 import {
 	BinaryExpression,
+	CallExpression,
 	isIdentifier,
+	isMemberExpression,
 	isNumericLiteral,
 	isPrivateName,
 	isStringLiteral,
@@ -29,6 +31,77 @@ import { fakePC } from "./helpers";
 export function compareHooks(): PluginTarget {
 	return {
 		visitor: {
+			CallExpression(path: NodePath<CallExpression>) {
+				// Instrument String.prototype.split() calls
+				// e.g., hostname.split(".")
+				if (
+					isMemberExpression(path.node.callee) &&
+					isIdentifier(path.node.callee.property) &&
+					path.node.callee.property.name === "split" &&
+					path.node.arguments.length > 0
+				) {
+					const stringExpr = path.node.callee.object;
+					const separator = path.node.arguments[0];
+					const limit = path.node.arguments[1]; // optional second argument
+
+					// Replace with traced version that helps the fuzzer understand
+					// the delimiter and expected string structure
+					const args = limit
+						? [stringExpr, separator, limit, fakePC()]
+						: [stringExpr, separator, fakePC()];
+
+					path.replaceWith(
+						types.callExpression(
+							types.identifier("Fuzzer.tracer.traceStringSplit"),
+							args,
+						),
+					);
+					return;
+				}
+
+				// Instrument Array.prototype.includes() calls
+				// e.g., ["PLAPI", "PLMainAPI", "PLExtAPI"].includes(apiGroup)
+				if (
+					isMemberExpression(path.node.callee) &&
+					isIdentifier(path.node.callee.property) &&
+					path.node.callee.property.name === "includes" &&
+					path.node.arguments.length > 0
+				) {
+					const arrayExpr = path.node.callee.object;
+					const searchElement = path.node.arguments[0];
+
+					// Replace with traced version that compares the search element
+					// against each array element to guide the fuzzer
+					path.replaceWith(
+						types.callExpression(
+							types.identifier("Fuzzer.tracer.traceArrayIncludes"),
+							[arrayExpr, searchElement, fakePC()],
+						),
+					);
+					return;
+				}
+
+				// Instrument Array.prototype.indexOf() calls
+				// e.g., ["PLAPI", "PLMainAPI", "PLExtAPI"].indexOf(apiGroup)
+				if (
+					isMemberExpression(path.node.callee) &&
+					isIdentifier(path.node.callee.property) &&
+					path.node.callee.property.name === "indexOf" &&
+					path.node.arguments.length > 0
+				) {
+					const arrayExpr = path.node.callee.object;
+					const searchElement = path.node.arguments[0];
+
+					// Replace with traced version
+					path.replaceWith(
+						types.callExpression(
+							types.identifier("Fuzzer.tracer.traceArrayIndexOf"),
+							[arrayExpr, searchElement, fakePC()],
+						),
+					);
+					return;
+				}
+			},
 			BinaryExpression(path: NodePath<BinaryExpression>) {
 				// TODO: Investigate this type, it can not be passed to the call expression
 				if (isPrivateName(path.node.left)) {

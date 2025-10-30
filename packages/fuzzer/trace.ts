@@ -122,12 +122,158 @@ function traceAndReturn(current: unknown, target: unknown, id: number) {
 	return target;
 }
 
+/**
+ * Traces Array.prototype.includes() calls to guide the fuzzer.
+ * This function replaces array.includes(searchElement) and preserves semantics
+ * while providing comparison hints to the fuzzer for each array element.
+ *
+ * @param arr the array to search in
+ * @param searchElement the element to search for
+ * @param id an unique identifier to distinguish between different includes calls
+ * @returns result of the includes operation
+ */
+function traceArrayIncludes(
+	arr: unknown,
+	searchElement: unknown,
+	id: number,
+): boolean {
+	// Validate that arr is actually an array
+	if (!Array.isArray(arr)) {
+		return false;
+	}
+
+	// Check if the array includes the search element
+	const result = arr.includes(searchElement);
+
+	// Trace comparisons with each array element to guide the fuzzer
+	// This helps the fuzzer understand what values would satisfy the includes check
+	if (typeof searchElement === "string") {
+		for (const element of arr) {
+			if (typeof element === "string") {
+				addon.traceUnequalStrings(id, searchElement, element);
+			}
+		}
+	} else if (
+		typeof searchElement === "number" &&
+		Number.isInteger(searchElement)
+	) {
+		for (const element of arr) {
+			if (typeof element === "number" && Number.isInteger(element)) {
+				addon.traceIntegerCompare(id, searchElement, element);
+			}
+		}
+	}
+
+	return result;
+}
+
+/**
+ * Traces Array.prototype.indexOf() calls to guide the fuzzer.
+ * This function replaces array.indexOf(searchElement) and preserves semantics
+ * while providing comparison hints to the fuzzer for each array element.
+ *
+ * @param arr the array to search in
+ * @param searchElement the element to search for
+ * @param id an unique identifier to distinguish between different indexOf calls
+ * @returns the index of the element, or -1 if not found
+ */
+function traceArrayIndexOf(
+	arr: unknown,
+	searchElement: unknown,
+	id: number,
+): number {
+	// Validate that arr is actually an array
+	if (!Array.isArray(arr)) {
+		return -1;
+	}
+
+	// Get the index
+	const result = arr.indexOf(searchElement);
+
+	// Trace comparisons with each array element to guide the fuzzer
+	if (typeof searchElement === "string") {
+		for (const element of arr) {
+			if (typeof element === "string") {
+				addon.traceUnequalStrings(id, searchElement, element);
+			}
+		}
+	} else if (
+		typeof searchElement === "number" &&
+		Number.isInteger(searchElement)
+	) {
+		for (const element of arr) {
+			if (typeof element === "number" && Number.isInteger(element)) {
+				addon.traceIntegerCompare(id, searchElement, element);
+			}
+		}
+	}
+
+	return result;
+}
+
+/**
+ * Traces String.prototype.split() calls to guide the fuzzer.
+ * This function replaces string.split(separator) and preserves semantics
+ * while providing hints to the fuzzer about the delimiter and expected string structure.
+ *
+ * @param str the string to split
+ * @param separator the delimiter string or regex
+ * @param limitOrId if called with 3 args: id, if called with 4 args: limit
+ * @param id optional unique identifier (present when limit is used)
+ * @returns array of substrings
+ */
+function traceStringSplit(
+	str: unknown,
+	separator: unknown,
+	limitOrId?: unknown,
+	id?: number,
+): string[] {
+	// Determine if limit was provided based on number of arguments
+	// If 4 arguments: str, separator, limit, id
+	// If 3 arguments: str, separator, id
+	const hasLimit = id !== undefined;
+	const actualId = hasLimit ? id : (limitOrId as number);
+	const limit = hasLimit ? (limitOrId as number | undefined) : undefined;
+
+	// Type check
+	if (typeof str !== "string") {
+		return [];
+	}
+
+	// Perform the actual split operation
+	let result: string[];
+	if (separator instanceof RegExp) {
+		result =
+			limit !== undefined ? str.split(separator, limit) : str.split(separator);
+	} else if (typeof separator === "string") {
+		result =
+			limit !== undefined ? str.split(separator, limit) : str.split(separator);
+
+		// Trace the separator for string containment
+		// This helps the fuzzer understand that 'str' should contain 'separator'
+		if (separator.length > 0) {
+			addon.traceStringContainment(actualId, separator, str);
+		}
+	} else {
+		// Fallback for unexpected separator types
+		result =
+			limit !== undefined
+				? str.split(separator as any, limit)
+				: str.split(separator as any);
+	}
+
+	return result;
+}
+
 export interface Tracer {
 	traceStrCmp: typeof traceStrCmp;
 	traceUnequalStrings: typeof addon.traceUnequalStrings;
 	traceStringContainment: typeof addon.traceStringContainment;
 	traceNumberCmp: typeof traceNumberCmp;
 	traceAndReturn: typeof traceAndReturn;
+	traceStringSplit: typeof traceStringSplit;
+	traceArrayIncludes: typeof traceArrayIncludes;
+	traceArrayIndexOf: typeof traceArrayIndexOf;
 	tracePcIndir: typeof addon.tracePcIndir;
 	guideTowardsEquality: typeof guideTowardsEquality;
 	guideTowardsContainment: typeof guideTowardsContainment;
@@ -140,6 +286,9 @@ export const tracer: Tracer = {
 	traceStringContainment: addon.traceStringContainment,
 	traceNumberCmp,
 	traceAndReturn,
+	traceStringSplit,
+	traceArrayIncludes,
+	traceArrayIndexOf,
 	tracePcIndir: addon.tracePcIndir,
 	guideTowardsEquality: guideTowardsEquality,
 	guideTowardsContainment: guideTowardsContainment,
