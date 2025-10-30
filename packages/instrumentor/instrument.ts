@@ -214,12 +214,17 @@ export function registerInstrumentor(instrumentor: Instrumentor) {
 	const { fileURLToPath } = require("url");
 	const Module = require("module");
 	const cache = new Map();
+	const instrumentedFiles = new Set<string>(); // Track instrumented files
 	// Hook ESM loader
 	registerHooks({
 		load(url: string, ctx: any, next: (arg0: any, arg1: any) => any) {
 			const res = next(url, ctx);
 			if (!url.startsWith("file:") || res.format !== "module") return res;
 			const filename = fileURLToPath(url);
+			// Skip if already instrumented
+			if (instrumentedFiles.has(filename)) {
+				return res;
+			}
 			try {
 				const stat = fs.statSync(filename);
 				const cached = cache.get(filename);
@@ -234,6 +239,7 @@ export function registerInstrumentor(instrumentor: Instrumentor) {
 				const codeWithMap = code;
 				// console.log('[INSTRUMENT]', filename);
 				cache.set(filename, { mtimeMs: stat.mtimeMs, codeWithMap });
+				instrumentedFiles.add(filename); // Mark as instrumented
 				return { format: "module", source: codeWithMap };
 			} catch (e) {
 				console.warn(
@@ -249,9 +255,14 @@ export function registerInstrumentor(instrumentor: Instrumentor) {
 	// Hook CommonJS loader
 	const originalCompile = Module.prototype._compile;
 	Module.prototype._compile = function (content: string, filename: string) {
+		// Skip if already instrumented
+		if (instrumentedFiles.has(filename)) {
+			return originalCompile.call(this, content, filename);
+		}
 		try {
 			const instrumentResult = instrumentor.instrument(content, filename);
 			const code = instrumentResult?.code || content;
+			instrumentedFiles.add(filename); // Mark as instrumented
 			return originalCompile.call(this, code, filename);
 		} catch (e) {
 			console.warn(
