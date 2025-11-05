@@ -1,0 +1,203 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Debug startFuzzing - Maze Example",
+			"type": "node",
+			"request": "launch",
+			"program": "${workspaceFolder}/packages/core/dist/cli.js",
+			"args": [
+				"${workspaceFolder}/examples/maze/fuzz.js",
+				"--timeout",
+				"50000"
+			],
+			"cwd": "${workspaceFolder}",
+			"console": "integratedTerminal",
+			"sourceMaps": true,
+			"smartStep": true,
+			"skipFiles": [
+				"<node_internals>/**"
+			],
+			"env": {
+				"NODE_ENV": "development",
+				"JAZZER_DEBUG": "1"
+			},
+			"preLaunchTask": "build",
+			"outFiles": [
+				"${workspaceFolder}/packages/*/dist/**/*.js"
+			]
+		},
+		{
+			"name": "Debug startFuzzing - app",
+			"type": "node",
+			"request": "launch",
+			// "runtimeExecutable": "/Users/susie/.nvm/versions/node/v23.11.0/bin/node",
+			// "runtimeVersion": "23",
+			"program": "${workspaceFolder}/packages/core/dist/cli.js",
+			"args": [
+				"${workspaceFolder}/examples/eidos/main.js",
+				"${workspaceFolder}/examples/eidos/corpus",
+				"--timeout",
+				"500000",
+				"--disable_bug_detectors",
+				".*",
+				"--sync",
+				"--",
+				"-rss_limit_mb=8192",
+				"-dict=/tmp/jazzer-property-names.dict"
+			],
+			"cwd": "${workspaceFolder}",
+			"console": "integratedTerminal",
+			"sourceMaps": true,
+			"smartStep": true,
+			"skipFiles": [
+				"<node_internals>/**"
+			],
+			"env": {
+				"NODE_ENV": "development",
+				"JAZZER_DEBUG": "1"
+			},
+			"preLaunchTask": "build",
+			"outFiles": [
+				"${workspaceFolder}/packages/*/dist/**/*.js"
+			]
+		},
+		{
+			"name": "Debug startFuzzing - JS-YAML Example",
+			"type": "node",
+			"request": "launch",
+			"program": "${workspaceFolder}/packages/core/dist/cli.js",
+			"args": [
+				"${workspaceFolder}/examples/js-yaml/fuzz.js",
+				"--dry_run"
+			],
+			"cwd": "${workspaceFolder}",
+			"console": "integratedTerminal",
+			"sourceMaps": true,
+			"smartStep": true,
+			"skipFiles": [
+				"<node_internals>/**"
+			],
+			"env": {
+				"NODE_ENV": "development",
+				"JAZZER_DEBUG": "1"
+			},
+			"preLaunchTask": "build",
+			"outFiles": [
+				"${workspaceFolder}/packages/*/dist/**/*.js"
+			]
+		},
+		{
+			"name": "Debug startFuzzing - Custom Target",
+			"type": "node",
+			"request": "launch",
+			"program": "${workspaceFolder}/packages/core/dist/cli.js",
+			"args": [
+				"${input:fuzzTarget}",
+				"--dry_run",
+				"--sync"
+			],
+			"cwd": "${workspaceFolder}",
+			"console": "integratedTerminal",
+			"sourceMaps": true,
+			"smartStep": true,
+			"skipFiles": [
+				"<node_internals>/**"
+			],
+			"env": {
+				"NODE_ENV": "development",
+				"JAZZER_DEBUG": "1"
+			},
+			"preLaunchTask": "build",
+			"outFiles": [
+				"${workspaceFolder}/packages/*/dist/**/*.js"
+			]
+		},
+		{
+			"name": "Debug startFuzzing - Short Run (10 iterations)",
+			"type": "node",
+			"request": "launch",
+			"program": "${workspaceFolder}/packages/core/dist/cli.js",
+			"args": [
+				"${workspaceFolder}/examples/maze/fuzz.js",
+				"--",
+				"-runs=10"
+			],
+			"cwd": "${workspaceFolder}",
+			"console": "integratedTerminal",
+			"sourceMaps": true,
+			"smartStep": true,
+			"skipFiles": [
+				"<node_internals>/**"
+			],
+			"env": {
+				"NODE_ENV": "development",
+				"JAZZER_DEBUG": "1"
+			},
+			"preLaunchTask": "build",
+			"outFiles": [
+				"${workspaceFolder}/packages/*/dist/**/*.js"
+			]
+		},
+		{
+			"name": "Debug startFuzzing - With Coverage",
+			"type": "node",
+			"request": "launch",
+			"program": "${workspaceFolder}/packages/core/dist/cli.js",
+			"args": [
+				"${workspaceFolder}/examples/maze/fuzz.js",
+				"--coverage",
+				"--dry_run"
+			],
+			"cwd": "${workspaceFolder}",
+			"console": "integratedTerminal",
+			"sourceMaps": true,
+			"smartStep": true,
+			"skipFiles": [
+				"<node_internals>/**"
+			],
+			"env": {
+				"NODE_ENV": "development",
+				"JAZZER_DEBUG": "1"
+			},
+			"preLaunchTask": "build",
+			"outFiles": [
+				"${workspaceFolder}/packages/*/dist/**/*.js"
+			]
+		},
+		{
+			"name": "Debug Core Module Tests",
+			"type": "node",
+			"request": "launch",
+			"program": "${workspaceFolder}/node_modules/.bin/jest",
+			"args": [
+				"--testPathPattern=packages/core",
+				"--runInBand",
+				"--no-cache"
+			],
+			"cwd": "${workspaceFolder}",
+			"console": "integratedTerminal",
+			"sourceMaps": true,
+			"smartStep": true,
+			"skipFiles": [
+				"<node_internals>/**"
+			],
+			"env": {
+				"NODE_ENV": "test",
+				"JAZZER_DEBUG": "1"
+			},
+			"preLaunchTask": "build",
+			"outFiles": [
+				"${workspaceFolder}/packages/*/dist/**/*.js"
+			]
+		}
+	],
+	"inputs": [
+		{
+			"id": "fuzzTarget",
+			"description": "Enter the path to your fuzz target file",
+			"default": "${workspaceFolder}/examples/maze/fuzz.js",
+			"type": "promptString"
+		}
+	]
+}
