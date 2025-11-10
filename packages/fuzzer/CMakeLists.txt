@@ -34,6 +34,7 @@ if (NOT CMAKE_JS_INC)
     OUTPUT_VARIABLE CMAKE_JS_INC)
 endif ()
 
+# Define the libFuzzer target for the jazzerjs shared library (no main)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set(LIBFUZZER_TARGET "clang_rt.fuzzer_no_main-x86_64")
   set(LIBFUZZER_STATIC_LIB_PATH "lib/linux/lib${LIBFUZZER_TARGET}.a")
@@ -47,6 +48,20 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
   set(LIBFUZZER_TARGET "clang_rt.fuzzer_no_main-x86_64")
   set(LIBFUZZER_STATIC_LIB_PATH "lib/windows/${LIBFUZZER_TARGET}.lib")
 endif()
+
+# Define the libFuzzer target for standalone fuzzing executables (with main)
+# <--- NEW/MODIFIED SECTION START
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(FUZZ_TARGET_LIBFUZZER_TARGET "clang_rt.fuzzer-x86_64")
+  set(FUZZ_TARGET_LIBFUZZER_STATIC_LIB_PATH "lib/linux/lib${FUZZ_TARGET_LIBFUZZER_TARGET}.a")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  set(FUZZ_TARGET_LIBFUZZER_TARGET "clang_rt.fuzzer_osx")
+  set(FUZZ_TARGET_LIBFUZZER_STATIC_LIB_PATH "lib/darwin/lib${FUZZ_TARGET_LIBFUZZER_TARGET}.a")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+  set(FUZZ_TARGET_LIBFUZZER_TARGET "clang_rt.fuzzer-x86_64")
+  set(FUZZ_TARGET_LIBFUZZER_STATIC_LIB_PATH "lib/windows/${FUZZ_TARGET_LIBFUZZER_TARGET}.lib")
+endif()
+# <--- NEW/MODIFIED SECTION END
 
 # Enable the functionality of Node-API version 4 and disable everything added
 # later, so that we don't accidentally break compatibility with older versions
@@ -62,8 +77,18 @@ endif()
 # releases.)
 add_definitions(-DNAPI_VERSION=4)
 
-file(GLOB SOURCE_FILES "*.cpp" "*.h" "shared/*.cpp" "shared/*.h")
-add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES} ${CMAKE_JS_SRC})
+# Collect source files for the main jazzerjs shared library
+# <--- MODIFIED SECTION START
+file(GLOB JAZZERJS_SOURCES
+     RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" # Use RELATIVE path for list removal
+     "*.cpp" "*.h" "shared/*.cpp" "shared/*.h")
+
+# Exclude fuzz_target.cpp from the main shared library build
+list(REMOVE_ITEM JAZZERJS_SOURCES "fuzz_target.cpp")
+
+add_library(${PROJECT_NAME} SHARED ${JAZZERJS_SOURCES} ${CMAKE_JS_SRC})
+# <--- MODIFIED SECTION END
+
 set_target_properties(${PROJECT_NAME} PROPERTIES PREFIX "" SUFFIX ".node")
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_JS_INC})
 target_link_libraries(${PROJECT_NAME} ${CMAKE_JS_LIB})
@@ -110,9 +135,9 @@ ExternalProject_Add(
              # isn't supported for shared objects like our Node plugin, disable
              # it here.
              -DCMAKE_CXX_FLAGS="-DSANITIZER_CAN_USE_PREINIT_ARRAY=0"
-             # No need to build all the sanitizers; the UBSan standalone runtime
-             # is built by default.
-             -DCOMPILER_RT_SANITIZERS_TO_BUILD=""
+             # Build AddressSanitizer and UndefinedBehaviorSanitizer alongside libFuzzer.
+             # These are crucial for effective fuzzing.
+             -DCOMPILER_RT_SANITIZERS_TO_BUILD="address;undefined" # <--- MODIFIED
              # Don't build libc++ into the fuzzer; our own code is C++ as well,
              # so we're going to link against a C++ runtime anyway.
              -DCOMPILER_RT_USE_LIBCXX=OFF
@@ -120,16 +145,17 @@ ExternalProject_Add(
              -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
              -DCOMPILER_RT_DEFAULT_TARGET_TRIPLE=${COMPILER_RT_DEFAULT_TARGET_TRIPLE}
              -DLLVM_CMAKE_DIR=<SOURCE_DIR>/llvm/cmake/modules
-             # We only need libfuzzer from the compiler-rt project.
+             # We need both libfuzzer (with main) and libfuzzer_no_main.
   BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target
-                ${LIBFUZZER_TARGET}
+                ${LIBFUZZER_TARGET} ${FUZZ_TARGET_LIBFUZZER_TARGET} # <--- MODIFIED
   # Skip the install step because it tries to copy files to a hardcoded path in
   # "/usr".
   INSTALL_COMMAND ""
   # Tell CMake about the libfuzzer libraries that are built as part of the
   # external project. Some CMake generators fail if we later depend on the
   # libraries without declaring them here (including ninja).
-  BUILD_BYPRODUCTS <BINARY_DIR>/${LIBFUZZER_STATIC_LIB_PATH})
+  BUILD_BYPRODUCTS <BINARY_DIR>/${LIBFUZZER_STATIC_LIB_PATH}
+                   <BINARY_DIR>/${FUZZ_TARGET_LIBFUZZER_STATIC_LIB_PATH}) # <--- MODIFIED
 
 # Make our plugin depend on and link against libfuzzer.
 add_dependencies(${PROJECT_NAME} compiler-rt)
@@ -161,3 +187,47 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     ${PROJECT_NAME}
     "$<LINK_LIBRARY:WHOLE_ARCHIVE,${BINARY_DIR}/${LIBFUZZER_STATIC_LIB_PATH}>")
 endif()
+
+
+# <--- NEW SECTION START: Add the fuzz_target executable
+# Add the fuzz_target executable
+add_executable(fuzz_target fuzz_target.cpp)
+
+# Ensure compiler-rt is built before trying to link against its products
+add_dependencies(fuzz_target compiler-rt)
+
+# Add fuzzer-specific compilation and linking flags
+# Use sanitizers (fuzzer, address, undefined) for effective fuzzing
+target_compile_options(fuzz_target PRIVATE -fsanitize=fuzzer,address,undefined)
+target_link_options(fuzz_target PRIVATE -fsanitize=fuzzer,address,undefined)
+
+# Add include directories for fuzz_target
+# This might be needed if fuzz_target.cpp uses headers from your main project
+# or from the fuzzer runtime itself (e.g., <fuzzer/FuzzerDefs.h>)
+target_include_directories(fuzz_target PRIVATE
+                           . # For headers in the current directory
+                           ${SOURCE_DIR}/compiler-rt/lib # For fuzzer headers
+                           ${CMAKE_JS_INC}) # If fuzz_target needs Node.js API headers (optional, only if needed)
+
+# Link libfuzzer (with main) to the fuzz_target executable
+# Use platform-specific linking flags for whole-archive linking
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_libraries(
+    fuzz_target -Wl,-whole-archive
+    ${BINARY_DIR}/${FUZZ_TARGET_LIBFUZZER_STATIC_LIB_PATH} -Wl,-no-whole-archive)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  target_link_libraries(
+    fuzz_target -Wl,-all_load ${BINARY_DIR}/${FUZZ_TARGET_LIBFUZZER_STATIC_LIB_PATH})
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+  target_link_libraries(
+    fuzz_target
+    "$<LINK_LIBRARY:WHOLE_ARCHIVE,${BINARY_DIR}/${FUZZ_TARGET_LIBFUZZER_STATIC_LIB_PATH}>")
+endif()
+
+# Optional: Add a custom target to easily run the fuzzer
+add_custom_target(run_fuzz_target
+    COMMAND $<TARGET_FILE:fuzz_target>
+    DEPENDS fuzz_target
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}" # Or a specific directory for corpus/dictionary
+    COMMENT "Running fuzz_target with default options. You can pass arguments to the fuzzer executable directly (e.g., --target=run_fuzz_target -- -max_len=100 -runs=0 corpus_dir)")
+# <--- NEW SECTION END

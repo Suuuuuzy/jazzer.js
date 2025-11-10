@@ -6,7 +6,7 @@ import path from "path";
 
 // Create a log file with timestamp in examples/eidos directory
 const logFile = path.join(
-	"/Users/susie/Desktop/electron_exp/jazzer.js/examples/eidos",
+	"/Users/sunyu/Downloads/jazzer.js/examples/eidos",
 	`fuzz-urls-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
 );
 
