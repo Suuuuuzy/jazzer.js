@@ -3,7 +3,6 @@ cmake_minimum_required(VERSION 3.15)
 project(jazzerjs)
 
 find_package(Patch REQUIRED)
-
 set(CMAKE_CXX_STANDARD 17) # mostly supported since GCC 7
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(LLVM_ENABLE_LLD TRUE)
@@ -26,13 +25,87 @@ if(MSVC
             /out:${CMAKE_JS_NODELIB_TARGET} ${CMAKE_STATIC_LINKER_FLAGS})
 endif()
 
+# --- START MODIFICATIONS FOR NODE.JS LINKING ---
+
 # CMAKE_JS_INC, containing nodejs API headers, is only set by invocations via
-# cmake-js, manually set it when executed in other environments like IDEs.
+# cmake-js. Manually set it when executed in other environments like IDEs.
+# We also need to ensure CMAKE_JS_LIB is set for linking.
+# If cmake-js didn't provide these, try to find Node.js ourselves.
+
+if (NOT CMAKE_JS_INC OR NOT CMAKE_JS_LIB)
+    message(STATUS "CMAKE_JS_INC or CMAKE_JS_LIB not fully set by cmake-js. Attempting to find Node.js manually...")
+
+    # Find Node.js using CMake's built-in FindNodejs module.
+    # We use 'CONFIG' mode for better results if a config file is available.
+    find_package(Nodejs CONFIG)
+
+    if (Nodejs_FOUND)
+        message(STATUS "Found Node.js via find_package(Nodejs):")
+        message(STATUS "  Include Dirs: ${Nodejs_INCLUDE_DIRS}")
+        message(STATUS "  Libraries: ${Nodejs_LIBRARIES}")
+
+        # If CMAKE_JS_INC was not set, use Nodejs_INCLUDE_DIRS as a fallback.
+        if (NOT CMAKE_JS_INC)
+            set(CMAKE_JS_INC "${Nodejs_INCLUDE_DIRS}")
+        endif()
+        # If CMAKE_JS_LIB was not set, use Nodejs_LIBRARIES as a fallback.
+        if (NOT CMAKE_JS_LIB)
+            set(CMAKE_JS_LIB "${Nodejs_LIBRARIES}")
+        endif()
+    else()
+        message(STATUS "find_package(Nodejs) failed to find Node.js.")
+        # If still not found, try to use 'npx cmake-js print-cmakejs-include' as a last resort
+        # for includes, as it was in your original script.
+        if (NOT CMAKE_JS_INC)
+             execute_process(
+                COMMAND npx cmake-js print-cmakejs-include
+                OUTPUT_VARIABLE CMAKE_JS_INC
+                OUTPUT_STRIP_TRAILING_WHITESPACE)
+            if(NOT CMAKE_JS_INC STREQUAL "")
+                message(STATUS "CMAKE_JS_INC found via 'npx cmake-js print-cmakejs-include': ${CMAKE_JS_INC}")
+            else()
+                message(FATAL_ERROR "CMAKE_JS_INC is empty after all attempts. Please ensure Node.js is installed and detectable, or run via cmake-js.")
+            endif()
+        endif()
+        # For libraries, 'npx cmake-js' doesn't have a direct equivalent to get a full path,
+        # so if find_package failed, and cmake-js didn't set CMAKE_JS_LIB,
+        # we might be in a bad state unless it's a simple 'node' library name.
+        if (NOT CMAKE_JS_LIB)
+            message(WARNING "CMAKE_JS_LIB is not set and find_package(Nodejs) failed. Linking might fail. Assuming 'node' as library name for linking.")
+            set(CMAKE_JS_LIB "node") # Fallback to just "node", might work on some systems
+        endif()
+    endif()
+else()
+    message(STATUS "Using Node.js paths provided by cmake-js:")
+    message(STATUS "  Include Dirs: ${CMAKE_JS_INC}")
+    message(STATUS "  Libraries: ${CMAKE_JS_LIB}")
+endif()
+
+# Check again for CMAKE_JS_INC in case previous checks somehow missed it
 if (NOT CMAKE_JS_INC)
-  execute_process(
-    COMMAND npx cmake-js print-cmakejs-include
-    OUTPUT_VARIABLE CMAKE_JS_INC)
-endif ()
+    message(FATAL_ERROR "CMAKE_JS_INC is still empty. Cannot proceed without Node.js include paths.")
+endif()
+
+# Get node-addon-api's include path
+# This is crucial if you are using node-addon-api for N-API abstractions.
+execute_process(
+    COMMAND node -p "require('node-addon-api').include"
+    OUTPUT_VARIABLE NODE_ADDON_API_INCLUDE_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE NODE_ADDON_API_EXIT_CODE
+    ERROR_QUIET # Suppress error messages if node-addon-api is not found
+)
+
+if (NODE_ADDON_API_EXIT_CODE EQUAL 0 AND NOT NODE_ADDON_API_INCLUDE_DIR STREQUAL "")
+    message(STATUS "Found node-addon-api include directory: ${NODE_ADDON_API_INCLUDE_DIR}")
+    # Add node-addon-api's include path to CMAKE_JS_INC
+    list(APPEND CMAKE_JS_INC "${NODE_ADDON_API_INCLUDE_DIR}")
+else()
+    message(STATUS "node-addon-api not found or not providing an include path. If you are using it, please ensure it's installed.")
+endif()
+
+# --- END MODIFICATIONS FOR NODE.JS LINKING ---
+
 
 # Define the libFuzzer target for the jazzerjs shared library (no main)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -42,15 +115,30 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
   set(LIBFUZZER_TARGET "clang_rt.fuzzer_no_main_osx")
   set(LIBFUZZER_STATIC_LIB_PATH "lib/darwin/lib${LIBFUZZER_TARGET}.a")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MT /EHsc")
-  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT /EHsc")
-  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd /EHsc")
+  # --- START OF MODIFICATION TO FIX 'missing separator' ERROR ---
+  # Problematic: Direct string concatenation to CMAKE_CXX_FLAGS for Windows.
+  # This can lead to malformed compiler flag strings in the generated Makefiles.
+  #
+  # Original lines:
+  # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MT /EHsc")
+  # set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT /EHsc")
+  # set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd /EHsc")
+  #
+  # Fix: Use idiomatic CMake commands for adding compile options and
+  # for setting the MSVC runtime library.
+  # /EHsc (Structured Exception Handling) is a general compile option.
+  add_compile_options(/EHsc)
+  # /MT and /MTd (Multithreaded Static Runtime Library) are managed by CMAKE_MSVC_RUNTIME_LIBRARY.
+  # This sets /MT for Release, RelWithDebInfo, MinSizeRel and /MTd for Debug.
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  # --- END OF MODIFICATION TO FIX 'missing separator' ERROR ---
+
   set(LIBFUZZER_TARGET "clang_rt.fuzzer_no_main-x86_64")
   set(LIBFUZZER_STATIC_LIB_PATH "lib/windows/${LIBFUZZER_TARGET}.lib")
 endif()
 
 # Define the libFuzzer target for standalone fuzzing executables (with main)
-# <--- NEW/MODIFIED SECTION START
+# <--- NEW/MODIFIED SECTION START (No changes needed here based on the problem, but kept for context)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set(FUZZ_TARGET_LIBFUZZER_TARGET "clang_rt.fuzzer-x86_64")
   set(FUZZ_TARGET_LIBFUZZER_STATIC_LIB_PATH "lib/linux/lib${FUZZ_TARGET_LIBFUZZER_TARGET}.a")
@@ -66,19 +154,10 @@ endif()
 # Enable the functionality of Node-API version 4 and disable everything added
 # later, so that we don't accidentally break compatibility with older versions
 # of Node (see https://nodejs.org/api/n-api.html#node-api-version-matrix).
-#
-# Note that prebuild recommends in its README to use ${napi_build_version} here,
-# but the variable is only set when cmake-js is invoked via prebuild (in which
-# case the API version is taken from "binary.napi_versions" in package.json).
-# Since we want the build to work in other cases as well, let's just use a
-# constant. (There is currently no point in a dynamic setting anyway since we
-# specify the oldest version that we're compatible with, and Node-API's ABI
-# stability guarantees that this version is available in all future Node-API
-# releases.)
 add_definitions(-DNAPI_VERSION=4)
 
 # Collect source files for the main jazzerjs shared library
-# <--- MODIFIED SECTION START
+# <--- MODIFIED SECTION START (No changes needed here based on the problem, but kept for context)
 file(GLOB JAZZERJS_SOURCES
      RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" # Use RELATIVE path for list removal
      "*.cpp" "*.h" "shared/*.cpp" "shared/*.h")
@@ -90,17 +169,37 @@ add_library(${PROJECT_NAME} SHARED ${JAZZERJS_SOURCES} ${CMAKE_JS_SRC})
 # <--- MODIFIED SECTION END
 
 set_target_properties(${PROJECT_NAME} PROPERTIES PREFIX "" SUFFIX ".node")
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_JS_INC})
-target_link_libraries(${PROJECT_NAME} ${CMAKE_JS_LIB})
+
+# --- MODIFIED LINKING/INCLUDE SECTION ---
+# Use the collected CMAKE_JS_INC and CMAKE_JS_LIB variables
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src # Your source directory
+    ${CMAKE_JS_INC}
+)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${CMAKE_JS_LIB})
+
+# macOS specific linking flags for N-API
+# This is a common workaround for "undefined symbol" errors on macOS when linking N-API modules.
+# It tells the linker to defer symbol resolution to runtime.
+# While it can solve missing symbol errors, it's generally better to explicitly link
+# against the correct library. However, for N-API, it's often necessary.
+if (APPLE)
+    # Using target_link_options is generally preferred over LINK_FLAGS for specific targets.
+    # Add it as a library entry to ensure it's applied correctly.
+    target_link_libraries(${PROJECT_NAME} PRIVATE "-undefined dynamic_lookup")
+    message(STATUS "Applied '-undefined dynamic_lookup' for macOS target '${PROJECT_NAME}'.")
+endif()
+# --- END MODIFIED LINKING/INCLUDE SECTION ---
+
 
 # We're not sure why but sometimes systems don't end up setting LLVM_TARGET_TRIPLE used in llvm's cmake to eventually
 # set COMPILER_RT_DEFAULT_TARGET which is necessary for compiler-rt to build
 # So this will either take it from an envvar or try to set it to a sane value until we can figure out why it's broken
 if(NOT DEFINED ENV{COMPILER_RT_DEFAULT_TARGET_TRIPLE})
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    execute_process(COMMAND ${CMAKE_CXX_COMPILER} "-print-target-triple" OUTPUT_VARIABLE COMPILER_RT_DEFAULT_TARGET_TRIPLE)
+    execute_process(COMMAND ${CMAKE_CXX_COMPILER} "-print-target-triple" OUTPUT_VARIABLE COMPILER_RT_DEFAULT_TARGET_TRIPLE OUTPUT_STRIP_TRAILING_WHITESPACE)
   elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    execute_process(COMMAND ${CMAKE_CXX_COMPILER} "-dumpmachine" OUTPUT_VARIABLE COMPILER_RT_DEFAULT_TARGET_TRIPLE)
+    execute_process(COMMAND ${CMAKE_CXX_COMPILER} "-dumpmachine" OUTPUT_VARIABLE COMPILER_RT_DEFAULT_TARGET_TRIPLE OUTPUT_STRIP_TRAILING_WHITESPACE)
   elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     # pulled from https://github.com/llvm/llvm-project/blob/main/llvm/cmake/modules/GetHostTriple.cmake
     if( CMAKE_C_COMPILER_ARCHITECTURE_ID MATCHES "ARM64.*" )
@@ -137,7 +236,7 @@ ExternalProject_Add(
              -DCMAKE_CXX_FLAGS="-DSANITIZER_CAN_USE_PREINIT_ARRAY=0"
              # Build AddressSanitizer and UndefinedBehaviorSanitizer alongside libFuzzer.
              # These are crucial for effective fuzzing.
-             -DCOMPILER_RT_SANITIZERS_TO_BUILD="address;undefined" # <--- MODIFIED
+             -DCOMPILER_RT_SANITIZERS_TO_BUILD="address;undefined" # <--- MODIFIED (No changes needed here)
              # Don't build libc++ into the fuzzer; our own code is C++ as well,
              # so we're going to link against a C++ runtime anyway.
              -DCOMPILER_RT_USE_LIBCXX=OFF
@@ -147,7 +246,7 @@ ExternalProject_Add(
              -DLLVM_CMAKE_DIR=<SOURCE_DIR>/llvm/cmake/modules
              # We need both libfuzzer (with main) and libfuzzer_no_main.
   BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target
-                ${LIBFUZZER_TARGET} ${FUZZ_TARGET_LIBFUZZER_TARGET} # <--- MODIFIED
+                ${LIBFUZZER_TARGET} ${FUZZ_TARGET_LIBFUZZER_TARGET} # <--- MODIFIED (No changes needed here)
   # Skip the install step because it tries to copy files to a hardcoded path in
   # "/usr".
   INSTALL_COMMAND ""
@@ -155,7 +254,7 @@ ExternalProject_Add(
   # external project. Some CMake generators fail if we later depend on the
   # libraries without declaring them here (including ninja).
   BUILD_BYPRODUCTS <BINARY_DIR>/${LIBFUZZER_STATIC_LIB_PATH}
-                   <BINARY_DIR>/${FUZZ_TARGET_LIBFUZZER_STATIC_LIB_PATH}) # <--- MODIFIED
+                   <BINARY_DIR>/${FUZZ_TARGET_LIBFUZZER_STATIC_LIB_PATH}) # <--- MODIFIED (No changes needed here)
 
 # Make our plugin depend on and link against libfuzzer.
 add_dependencies(${PROJECT_NAME} compiler-rt)
@@ -179,9 +278,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     ${BINARY_DIR}/${LIBFUZZER_STATIC_LIB_PATH} -Wl,-no-whole-archive)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
   target_link_libraries(
-    ${PROJECT_NAME} -Wl,-all_load ${BINARY_DIR}/${LIBFUZZER_STATIC_LIB_PATH})
+    ${PROJECT_NAME} PRIVATE -Wl,-all_load ${BINARY_DIR}/${LIBFUZZER_STATIC_LIB_PATH})
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
   # Force MSVC to do an MT build, suggested by cmake-js
+  # This policy is relevant to how CMake chooses the runtime library.
   cmake_policy(SET CMP0091 NEW)
   target_link_libraries(
     ${PROJECT_NAME}
@@ -189,7 +289,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
 endif()
 
 
-# <--- NEW SECTION START: Add the fuzz_target executable
+# <--- NEW SECTION START: Add the fuzz_target executable (No changes needed here)
 # Add the fuzz_target executable
 add_executable(fuzz_target fuzz_target.cpp)
 
